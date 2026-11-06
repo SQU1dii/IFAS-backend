@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.log
+coverage/
+.vscode/
+dist/
+# SQLite DBs created by the test suite
+*.sqlite
+*.sqlite3
+tests/ifas_test.sqlite

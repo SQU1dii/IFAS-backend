@@ -1,0 +1,824 @@
+openapi: 3.1.0
+info:
+  title: IFAS — Intelligent Financial Analytics System API
+  version: 1.0.0
+  description: |
+    Multi-workspace finance platform for individuals, businesses and organisations.
+    All endpoints are under /api/v1. Currency is KES by default.
+    Authentication uses JWT Bearer tokens (short-lived access + rotating refresh).
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:    { type: string }
+            message: { type: string }
+            fields:  { type: object, nullable: true }
+    User:
+      type: object
+      properties:
+        id:               { type: integer }
+        email:            { type: string, format: email }
+        full_name:        { type: string }
+        phone:            { type: string, nullable: true }
+        is_platform_admin:{ type: boolean }
+        is_active:        { type: boolean }
+        created_at:       { type: string, format: date-time }
+    Workspace:
+      type: object
+      properties:
+        id:             { type: integer }
+        name:           { type: string }
+        workspace_type: { type: string, enum: [PERSONAL, BUSINESS, ORGANIZATION] }
+        currency:       { type: string, example: KES }
+        created_at:     { type: string, format: date-time }
+        role:           { type: string, description: "Caller's role in this workspace" }
+        permissions:    { type: array, items: { type: string } }
+    Account:
+      type: object
+      properties:
+        id:              { type: integer }
+        workspace_id:    { type: integer }
+        name:            { type: string }
+        account_type:    { type: string, enum: [BANK, MOBILE_MONEY, CASH] }
+        opening_balance: { type: number, format: double }
+        created_at:      { type: string, format: date-time }
+    Category:
+      type: object
+      properties:
+        id:            { type: integer }
+        workspace_id:  { type: integer }
+        name:          { type: string }
+        category_type: { type: string, enum: [INCOME, EXPENSE] }
+    Transaction:
+      type: object
+      properties:
+        id:           { type: integer }
+        workspace_id: { type: integer }
+        txn_type:     { type: string, enum: [INCOME, EXPENSE, TRANSFER] }
+        amount:       { type: number, format: double, minimum: 0.01 }
+        txn_date:     { type: string, format: date }
+        description:  { type: string }
+        status:       { type: string, enum: [POSTED, VOID] }
+        account_id:   { type: integer }
+        to_account_id:{ type: integer, nullable: true }
+        category_id:  { type: integer, nullable: true }
+        department_id:{ type: integer, nullable: true }
+        created_by:   { type: integer }
+        created_at:   { type: string, format: date-time }
+    Budget:
+      type: object
+      properties:
+        id:              { type: integer }
+        workspace_id:    { type: integer }
+        category_id:     { type: integer, nullable: true }
+        department_id:   { type: integer, nullable: true }
+        period_start:    { type: string, format: date }
+        period_end:      { type: string, format: date }
+        amount_limit:    { type: number, format: double }
+        alert_threshold: { type: integer, minimum: 1, maximum: 100 }
+    Pagination:
+      type: object
+      properties:
+        total:     { type: integer }
+        page:      { type: integer }
+        page_size: { type: integer }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Auth ──────────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, full_name]
+              properties:
+                email:     { type: string, format: email }
+                password:  { type: string, minLength: 8 }
+                full_name: { type: string }
+                phone:     { type: string }
+      responses:
+        '201':
+          description: User registered and tokens issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:          { $ref: '#/components/schemas/User' }
+                  access_token:  { type: string }
+                  refresh_token: { type: string }
+        '409': { description: Email already registered }
+        '422': { description: Validation error }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:          { $ref: '#/components/schemas/User' }
+                  access_token:  { type: string }
+                  refresh_token: { type: string }
+        '401': { description: Invalid credentials }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke refresh token)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200': { description: Logged out }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:  { type: string }
+                  refresh_token: { type: string }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+
+  # ── Workspaces ─────────────────────────────────────────────────────────────
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      summary: List my workspaces
+      responses:
+        '200':
+          description: List of workspaces with role
+    post:
+      tags: [Workspaces]
+      summary: Create workspace (owner membership + default categories seeded automatically)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, workspace_type]
+              properties:
+                name:           { type: string }
+                workspace_type: { type: string, enum: [PERSONAL, BUSINESS, ORGANIZATION] }
+                currency:       { type: string, default: KES }
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspace: { $ref: '#/components/schemas/Workspace' }
+
+  /workspaces/{workspaceId}:
+    get:
+      tags: [Workspaces]
+      summary: Get workspace detail with role + permissions
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Workspace detail }
+        '403': { description: Not a member }
+        '404': { description: Not found }
+    patch:
+      tags: [Workspaces]
+      summary: Update workspace name / currency
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:     { type: string }
+                currency: { type: string }
+      responses:
+        '200': { description: Updated }
+
+  /workspaces/{workspaceId}/members:
+    get:
+      tags: [Members]
+      summary: List workspace members
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Member list }
+    post:
+      tags: [Members]
+      summary: Add member
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role_name]
+              properties:
+                user_id:       { type: integer }
+                role_name:     { type: string }
+                department_id: { type: integer, nullable: true }
+      responses:
+        '201': { description: Member added }
+
+  /workspaces/{workspaceId}/members/{memberId}:
+    patch:
+      tags: [Members]
+      summary: Change member role
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: memberId;    in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Members]
+      summary: Remove member (last owner cannot be removed)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: memberId;    in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Removed }
+        '403': { description: Last owner protection }
+
+  /workspaces/{workspaceId}/departments:
+    get:
+      tags: [Departments]
+      summary: List departments (ORGANIZATION only)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Department list }
+    post:
+      tags: [Departments]
+      summary: Create department
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '201': { description: Created }
+
+  # ── Accounts ─────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/accounts:
+    get:
+      tags: [Accounts]
+      summary: List accounts
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Account list }
+    post:
+      tags: [Accounts]
+      summary: Create account
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, account_type]
+              properties:
+                name:            { type: string }
+                account_type:    { type: string, enum: [BANK, MOBILE_MONEY, CASH] }
+                opening_balance: { type: number, default: 0 }
+      responses:
+        '201': { description: Created }
+
+  # ── Categories ────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/categories:
+    get:
+      tags: [Categories]
+      summary: List categories
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: type; in: query; schema: { type: string, enum: [INCOME, EXPENSE] }
+      responses:
+        '200': { description: Category list }
+
+  # ── Transactions ──────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/transactions:
+    get:
+      tags: [Transactions]
+      summary: List transactions (paginated, filterable)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: page;        in: query; schema: { type: integer, default: 1 }
+        - name: page_size;   in: query; schema: { type: integer, default: 50 }
+        - name: txn_type;    in: query; schema: { type: string, enum: [INCOME, EXPENSE, TRANSFER] }
+        - name: status;      in: query; schema: { type: string, enum: [POSTED, VOID] }
+        - name: date_from;   in: query; schema: { type: string, format: date }
+        - name: date_to;     in: query; schema: { type: string, format: date }
+        - name: account_id;  in: query; schema: { type: integer }
+        - name: category_id; in: query; schema: { type: integer }
+      responses:
+        '200':
+          description: Paginated transaction list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Transaction' }
+    post:
+      tags: [Transactions]
+      summary: Create transaction
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [txn_type, amount, txn_date, description, account_id]
+              properties:
+                txn_type:     { type: string, enum: [INCOME, EXPENSE, TRANSFER] }
+                amount:       { type: number, minimum: 0.01 }
+                txn_date:     { type: string, format: date }
+                description:  { type: string }
+                account_id:   { type: integer }
+                to_account_id: { type: integer, description: Required for TRANSFER }
+                category_id:  { type: integer, description: Required for INCOME and EXPENSE }
+                department_id: { type: integer }
+      responses:
+        '201': { description: Transaction created }
+        '400': { description: Cross-workspace account/category reference }
+        '422': { description: Validation error }
+
+  /workspaces/{workspaceId}/transactions/{txnId}/void:
+    post:
+      tags: [Transactions]
+      summary: Void a transaction (never deleted)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: txnId;       in: path; required: true; schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                void_reason: { type: string }
+      responses:
+        '200': { description: Voided }
+        '400': { description: Already voided }
+
+  # ── CSV Import ────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/imports:
+    get:
+      tags: [Import]
+      summary: List past imports
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Import list }
+    post:
+      tags: [Import]
+      summary: Upload CSV and get preview (nothing saved yet)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "CSV with columns: ref,date,description,amount,type,account,to_account,category,department"
+      responses:
+        '201':
+          description: Preview result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  import_id:       { type: integer }
+                  accepted_count:  { type: integer }
+                  duplicate_count: { type: integer }
+                  rejected_count:  { type: integer }
+                  accepted:        { type: array, items: { type: object } }
+                  duplicates:      { type: array, items: { type: object } }
+                  rejected:        { type: array, items: { type: object } }
+
+  /workspaces/{workspaceId}/imports/{importId}/confirm:
+    post:
+      tags: [Import]
+      summary: Commit accepted rows in a single DB transaction
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: importId;    in: path; required: true; schema: { type: integer }
+      responses:
+        '200':
+          description: Import confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inserted_count: { type: integer }
+                  import_id:      { type: integer }
+
+  /workspaces/{workspaceId}/imports/{importId}/rejected:
+    get:
+      tags: [Import]
+      summary: Download rejected rows as CSV
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: importId;    in: path; required: true; schema: { type: integer }
+      responses:
+        '200':
+          description: Rejected rows CSV
+          content:
+            text/csv:
+              schema: { type: string }
+
+  # ── Budgets ───────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/budgets:
+    get:
+      tags: [Budgets]
+      summary: List budgets
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Budget list }
+    post:
+      tags: [Budgets]
+      summary: Create budget
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period_start, period_end, amount_limit]
+              properties:
+                category_id:     { type: integer }
+                department_id:   { type: integer }
+                period_start:    { type: string, format: date }
+                period_end:      { type: string, format: date }
+                amount_limit:    { type: number }
+                alert_threshold: { type: integer, default: 80 }
+      responses:
+        '201': { description: Created }
+
+  /workspaces/{workspaceId}/budgets/{budgetId}/status:
+    get:
+      tags: [Budgets]
+      summary: Get budget spend status (% used)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: budgetId;    in: path; required: true; schema: { type: integer }
+      responses:
+        '200':
+          description: Budget status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Budget'
+                  - type: object
+                    properties:
+                      spent:        { type: number }
+                      percent_used: { type: number }
+
+  # ── Savings Goals ─────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/goals:
+    get:
+      tags: [Goals]
+      summary: List savings goals (PERSONAL workspaces only)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Goals list }
+    post:
+      tags: [Goals]
+      summary: Create savings goal
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, target_amount]
+              properties:
+                name:          { type: string }
+                target_amount: { type: number }
+                saved_amount:  { type: number, default: 0 }
+                target_date:   { type: string, format: date }
+      responses:
+        '201': { description: Created }
+
+  # ── Alerts ────────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: status; in: query; schema: { type: string, enum: [OPEN, REVIEWED, DISMISSED] }
+      responses:
+        '200': { description: Alert list }
+
+  /workspaces/{workspaceId}/alerts/{alertId}/review:
+    patch:
+      tags: [Alerts]
+      summary: Mark alert as reviewed
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: alertId;     in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Alert reviewed }
+
+  /workspaces/{workspaceId}/alerts/{alertId}/dismiss:
+    patch:
+      tags: [Alerts]
+      summary: Dismiss alert (kept in history)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: alertId;     in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Alert dismissed }
+
+  # ── Dashboard & Reports ───────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Get workspace dashboard (shaped by type and role)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dashboard:
+                    type: object
+                    properties:
+                      income_this_month:  { type: number }
+                      expense_this_month: { type: number }
+                      net_this_month:     { type: number }
+                      monthly_trend:      { type: array, items: { type: object } }
+                      category_breakdown: { type: array, items: { type: object } }
+                      budget_status:      { type: array, items: { type: object } }
+                      open_alert_count:   { type: integer }
+
+  /workspaces/{workspaceId}/reports:
+    get:
+      tags: [Reports]
+      summary: Download transaction report as CSV
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: date_from;   in: query; schema: { type: string, format: date }
+        - name: date_to;     in: query; schema: { type: string, format: date }
+        - name: txn_type;    in: query; schema: { type: string }
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: { type: string }
+
+  # ── Analytics ─────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/forecast:
+    get:
+      tags: [Analytics]
+      summary: Expense forecast (requires ≥6 months history)
+      parameters:
+        - name: workspaceId;  in: path;  required: true; schema: { type: integer }
+        - name: category_id;  in: query; schema: { type: integer }
+        - name: horizon;      in: query; schema: { type: integer, default: 6 }
+      responses:
+        '200':
+          description: Forecast or insufficient-data message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forecast:
+                    type: object
+                    properties:
+                      values:            { type: array, items: { type: object } }
+                      mape:              { type: number }
+                      model:             { type: string }
+                      insufficient_data: { type: boolean }
+
+  /workspaces/{workspaceId}/recommendations:
+    get:
+      tags: [Analytics]
+      summary: List recommendations
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Recommendations list }
+
+  /workspaces/{workspaceId}/recommendations/refresh:
+    post:
+      tags: [Analytics]
+      summary: Generate fresh recommendations (calls analytics service)
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Refreshed recommendations }
+
+  # ── Assistant ─────────────────────────────────────────────────────────────────
+  /workspaces/{workspaceId}/assistant/messages:
+    post:
+      tags: [Assistant]
+      summary: Send message to AI assistant
+      description: |
+        Only aggregated figures are sent to the AI provider (no names, no
+        raw descriptions). A limitations notice is appended to every response.
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:         { type: string }
+                conversation_id: { type: integer, nullable: true, description: Omit to start a new conversation }
+      responses:
+        '200':
+          description: AI reply + limitations notice
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_id: { type: integer }
+                  message:
+                    type: object
+                    properties:
+                      role:    { type: string, enum: [assistant] }
+                      content: { type: string }
+                  context_used: { type: object }
+
+  /workspaces/{workspaceId}/assistant/conversations:
+    get:
+      tags: [Assistant]
+      summary: List conversations for this user + workspace
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Conversation list }
+
+  /workspaces/{workspaceId}/assistant/conversations/{convId}:
+    get:
+      tags: [Assistant]
+      summary: Get a full conversation with messages
+      parameters:
+        - name: workspaceId; in: path; required: true; schema: { type: integer }
+        - name: convId;      in: path; required: true; schema: { type: integer }
+      responses:
+        '200': { description: Conversation with messages }
+
+  # ── Platform Admin ─────────────────────────────────────────────────────────────
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List all users (platform admin only, no financial data)
+      responses:
+        '200': { description: User list }
+
+  /admin/users/{userId}:
+    patch:
+      tags: [Admin]
+      summary: Deactivate / update a user account
+      parameters:
+        - name: userId; in: path; required: true; schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active: { type: boolean }
+                full_name: { type: string }
+      responses:
+        '200': { description: Updated }
+
+  /admin/audit-log:
+    get:
+      tags: [Admin]
+      summary: View audit log (last 200 entries)
+      responses:
+        '200': { description: Audit log }
