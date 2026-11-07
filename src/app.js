@@ -1,6 +1,7 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 
 const config = require('./config');
 const logger = require('./config/logger');
@@ -23,6 +24,7 @@ function createApp() {
   app.use(cors({ origin: config.corsOrigins, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
+  app.use(cookieParser());
   app.use(requestId);
   app.use(accessLog);
 

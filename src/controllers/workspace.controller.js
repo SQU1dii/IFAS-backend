@@ -1,101 +1,119 @@
+'use strict';
 const workspaceService = require('../services/workspace.service');
 const asyncHandler = require('../utils/asyncHandler');
+const { ok, created } = require('../utils/response');
+const { mapWorkspace, mapMember, mapDepartment } = require('../utils/mappers');
 
 function ip(req) { return req.ip || null; }
+function wsId(req) { return Number(req.params.workspaceId); }
 
 // ── Workspaces ────────────────────────────────────────────────────────────────
 const list = asyncHandler(async (req, res) => {
   const workspaces = await workspaceService.listWorkspaces(req.user.id);
-  res.json({ workspaces });
+  // Each row already has role_name + department_id from the join.
+  const data = workspaces.map((w) => mapWorkspace(w, w.role_name, []));
+  ok(res, data);
 });
 
 const create = asyncHandler(async (req, res) => {
-  const workspace = await workspaceService.createWorkspace(req.body, req.user.id, ip(req));
-  res.status(201).json({ workspace });
+  // Accept both `workspace_type` (API) and `type` (frontend).
+  const body = {
+    name: req.body.name,
+    workspace_type: req.body.workspace_type || req.body.type,
+    currency: req.body.currency || 'KES',
+  };
+  const ws = await workspaceService.createWorkspace(body, req.user.id, ip(req));
+  // Return with the caller as owner + their permissions.
+  const { ROLES, ROLE_PERMISSIONS } = require('../config/constants');
+  const ownerRole = ROLES_BY_WS(ws.workspace_type);
+  created(res, mapWorkspace(ws, ownerRole, ROLE_PERMISSIONS[ownerRole] || []), null, 'Workspace created.');
 });
 
+function ROLES_BY_WS(type) {
+  if (type === 'PERSONAL') return require('../config/constants').ROLES.PERSONAL_OWNER;
+  if (type === 'BUSINESS') return require('../config/constants').ROLES.BUSINESS_OWNER;
+  return require('../config/constants').ROLES.ORG_ADMIN;
+}
+
 const getOne = asyncHandler(async (req, res) => {
-  // req.workspace and req.membership are already populated by loadMembership.
-  // We just need to attach the permission codes.
+  // req.workspace + req.membership already populated by loadMembership.
   const { workspace, membership } = req;
   const permissions = membership ? Array.from(membership.permissions) : [];
-  res.json({
-    workspace: {
-      ...workspace,
-      role: membership?.role_name ?? null,
-      permissions,
-    },
-  });
+  ok(res, mapWorkspace(workspace, membership?.role_name, permissions));
 });
 
 const update = asyncHandler(async (req, res) => {
-  const workspace = await workspaceService.updateWorkspace(Number(req.params.workspaceId), req.body);
-  res.json({ workspace });
+  const patch = {};
+  if (req.body.name) patch.name = req.body.name;
+  if (req.body.currency) patch.currency = req.body.currency;
+  const ws = await workspaceService.updateWorkspace(wsId(req), patch);
+  ok(res, mapWorkspace(ws, req.membership?.role_name, Array.from(req.membership?.permissions || [])));
 });
 
 // ── Members ───────────────────────────────────────────────────────────────────
 const listMembers = asyncHandler(async (req, res) => {
-  const members = await workspaceService.listMembers(Number(req.params.workspaceId));
-  res.json({ members });
+  const members = await workspaceService.listMembers(wsId(req));
+  ok(res, members.map(mapMember));
 });
 
 const addMember = asyncHandler(async (req, res) => {
   const members = await workspaceService.addMember({
-    workspaceId:   Number(req.params.workspaceId),
-    targetUserId:  req.body.user_id,
-    roleName:      req.body.role_name,
-    departmentId:  req.body.department_id ?? null,
+    workspaceId:  wsId(req),
+    targetUserId: req.body.user_id,
+    email:        req.body.email,
+    roleName:     req.body.role_name,
+    simpleRole:   req.body.role,
+    departmentId: req.body.department_id ?? null,
   }, req.user.id, ip(req));
-  res.status(201).json({ members });
+  created(res, members.map(mapMember), null, 'Member added.');
 });
 
 const updateMember = asyncHandler(async (req, res) => {
   const members = await workspaceService.updateMember({
-    workspaceId:  Number(req.params.workspaceId),
+    workspaceId:  wsId(req),
     memberId:     Number(req.params.memberId),
     roleName:     req.body.role_name,
+    simpleRole:   req.body.role,
     departmentId: req.body.department_id,
   }, req.user.id, ip(req));
-  res.json({ members });
+  ok(res, members.map(mapMember));
 });
 
 const removeMember = asyncHandler(async (req, res) => {
-  await workspaceService.removeMember({
-    workspaceId: Number(req.params.workspaceId),
-    memberId:    Number(req.params.memberId),
-  }, req.user.id, ip(req));
-  res.json({ message: 'Member removed.' });
+  await workspaceService.removeMember({ workspaceId: wsId(req), memberId: Number(req.params.memberId) }, req.user.id, ip(req));
+  ok(res, {}, null, 'Member removed.');
 });
 
 // ── Departments ───────────────────────────────────────────────────────────────
 const listDepts = asyncHandler(async (req, res) => {
-  const departments = await workspaceService.listDepartments(Number(req.params.workspaceId));
-  res.json({ departments });
+  const departments = await workspaceService.listDepartments(wsId(req));
+  ok(res, departments.map(mapDepartment));
 });
 
 const createDept = asyncHandler(async (req, res) => {
   const dept = await workspaceService.createDepartment({
-    workspaceId: Number(req.params.workspaceId),
+    workspaceId: wsId(req),
     name:        req.body.name,
+    budget:      req.body.budget,
+    head_name:   req.body.head_name,
   }, req.user.id, ip(req));
-  res.status(201).json({ department: dept });
+  created(res, mapDepartment(dept));
 });
 
 const updateDept = asyncHandler(async (req, res) => {
   const dept = await workspaceService.updateDepartment({
-    workspaceId: Number(req.params.workspaceId),
+    workspaceId: wsId(req),
     deptId:      Number(req.params.deptId),
     name:        req.body.name,
+    budget:      req.body.budget,
+    head_name:   req.body.head_name,
   }, req.user.id, ip(req));
-  res.json({ department: dept });
+  ok(res, mapDepartment(dept));
 });
 
 const deleteDept = asyncHandler(async (req, res) => {
-  await workspaceService.deleteDepartment({
-    workspaceId: Number(req.params.workspaceId),
-    deptId:      Number(req.params.deptId),
-  }, req.user.id, ip(req));
-  res.json({ message: 'Department deleted.' });
+  await workspaceService.deleteDepartment({ workspaceId: wsId(req), deptId: Number(req.params.deptId) }, req.user.id, ip(req));
+  ok(res, {}, null, 'Department deleted.');
 });
 
 module.exports = {

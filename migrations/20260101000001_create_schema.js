@@ -59,6 +59,8 @@ exports.up = function (knex) {
       t.bigIncrements('id').unsigned().primary();
       t.bigInteger('workspace_id').unsigned().notNullable().references('workspaces.id').onDelete('CASCADE');
       t.string('name', 120).notNullable();
+      t.decimal('budget', 14, 2).notNullable().defaultTo(0);
+      t.string('head_name', 255).nullable();
       t.datetime('created_at').notNullable().defaultTo(knex.fn.now());
       t.unique(['workspace_id', 'name']);
       // candidate key for composite FK from transactions
@@ -152,6 +154,7 @@ exports.up = function (knex) {
       t.date('period_end').notNullable();
       t.decimal('amount_limit', 14, 2).notNullable();
       t.tinyint('alert_threshold').unsigned().notNullable().defaultTo(80);
+      t.string('notes', 500).nullable();
       t.datetime('created_at').notNullable().defaultTo(knex.fn.now());
       t.datetime('updated_at').notNullable().defaultTo(knex.fn.now());
       t.foreign(['workspace_id', 'category_id']).references(['workspace_id', 'id']).inTable('categories').onDelete('CASCADE');
@@ -261,11 +264,35 @@ exports.up = function (knex) {
       t.enu('category_type', C.CATEGORY_TYPES).notNullable();
       t.integer('sort_order').unsigned().notNullable().defaultTo(0);
       t.unique(['workspace_type', 'name', 'category_type']);
+    })
+    .createTable('savings_contributions', (t) => {
+      t.bigIncrements('id').unsigned().primary();
+      t.bigInteger('workspace_id').unsigned().notNullable().references('workspaces.id').onDelete('CASCADE');
+      t.bigInteger('goal_id').unsigned().notNullable().references('savings_goals.id').onDelete('CASCADE');
+      t.date('date').notNullable();
+      t.decimal('amount', 14, 2).notNullable();
+      t.enu('type', ['contribution', 'withdrawal']).notNullable().defaultTo('contribution');
+      t.string('notes', 500).nullable();
+      t.datetime('created_at').notNullable().defaultTo(knex.fn.now());
+      t.index(['workspace_id', 'goal_id'], 'idx_contrib_ws_goal');
+    })
+    .createTable('notifications', (t) => {
+      t.bigIncrements('id').unsigned().primary();
+      t.bigInteger('user_id').unsigned().notNullable().references('users.id').onDelete('CASCADE');
+      t.bigInteger('workspace_id').unsigned().nullable().references('workspaces.id').onDelete('CASCADE');
+      t.string('type', 60).notNullable();
+      t.string('title', 255).notNullable();
+      t.text('body').nullable();
+      t.boolean('is_read').notNullable().defaultTo(false);
+      t.datetime('created_at').notNullable().defaultTo(knex.fn.now());
+      t.index('user_id', 'idx_notif_user');
     });
 };
 
 exports.down = function (knex) {
   return knex.schema
+    .dropTableIfExists('notifications')
+    .dropTableIfExists('savings_contributions')
     .dropTableIfExists('category_templates')
     .dropTableIfExists('audit_log')
     .dropTableIfExists('refresh_tokens')

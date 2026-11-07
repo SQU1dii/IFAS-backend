@@ -2,10 +2,10 @@
 /**
  * CSV Import routes — mounted at /api/v1/workspaces/:workspaceId
  *
- * POST   /imports           upload CSV → preview (nothing saved)
- * POST   /imports/:id/confirm  commit accepted rows in one transaction
- * GET    /imports            list imports for this workspace
- * GET    /imports/:id/rejected  download rejected rows as CSV
+ * POST /imports              → preview. Accepts JSON { rows: [...] } (frontend)
+ *                              OR multipart file field "file" (legacy API).
+ * POST /imports/:id/confirm  → commit accepted rows in one transaction
+ * GET  /imports              → list past imports
  */
 const express    = require('express');
 const multer     = require('multer');
@@ -14,27 +14,39 @@ const loadMembership    = require('../middleware/loadMembership');
 const requirePermission = require('../middleware/requirePermission');
 const asyncHandler      = require('../utils/asyncHandler');
 const importSvc         = require('../services/import.service');
+const { parseImportCsv } = require('../utils/csvParser');
+const { badRequest }     = require('../utils/errors');
 
 const router  = express.Router({ mergeParams: true });
 const guard   = [authenticate, loadMembership];
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const wsId    = (req) => Number(req.params.workspaceId);
 
-const wsId = (req) => Number(req.params.workspaceId);
-
-// List past imports
 router.get('/imports', ...guard, requirePermission('transactions.import'),
   asyncHandler(async (req, res) => {
-    res.json({ imports: await importSvc.listImports(wsId(req)) });
+    const imports = await importSvc.listImports(wsId(req));
+    res.json({ success: true, data: imports, meta: null, message: null });
   }),
 );
 
-// Upload + preview
+// Upload + preview — supports both JSON {rows} (frontend) and multipart file.
 router.post('/imports', ...guard, requirePermission('transactions.import'),
   upload.single('file'),
   asyncHandler(async (req, res) => {
-    if (!req.file) throw require('../utils/errors').badRequest('No file uploaded. Send the CSV as form-data field "file".', null, 'NO_FILE');
-    const result = await importSvc.preview(wsId(req), req.user.id, req.file.buffer, req.file.originalname);
-    res.status(201).json(result);
+    let rows, fileName;
+    if (req.body && Array.isArray(req.body.rows)) {
+      // Frontend sends pre-parsed row objects as JSON.
+      rows = req.body.rows;
+      fileName = req.body.file_name || 'rows.json';
+    } else if (req.file) {
+      // Legacy: CSV file upload.
+      rows = parseImportCsv(req.file.buffer);
+      fileName = req.file.originalname;
+    } else {
+      throw badRequest('Send either JSON { rows: [...] } or a CSV file as form-data field "file".', null, 'NO_ROWS');
+    }
+    const result = await importSvc.preview(wsId(req), req.user.id, rows, fileName);
+    res.status(201).json({ success: true, data: result, meta: null, message: null });
   }),
 );
 
@@ -42,17 +54,7 @@ router.post('/imports', ...guard, requirePermission('transactions.import'),
 router.post('/imports/:importId/confirm', ...guard, requirePermission('transactions.import'),
   asyncHandler(async (req, res) => {
     const result = await importSvc.confirm(wsId(req), req.user.id, Number(req.params.importId));
-    res.json(result);
-  }),
-);
-
-// Download rejected rows as CSV
-router.get('/imports/:importId/rejected', ...guard, requirePermission('transactions.import'),
-  asyncHandler(async (req, res) => {
-    const csv = await importSvc.getRejectedCsv(wsId(req), Number(req.params.importId));
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="rejected_${req.params.importId}.csv"`);
-    res.send(csv);
+    res.json({ success: true, data: result, meta: null, message: null });
   }),
 );
 

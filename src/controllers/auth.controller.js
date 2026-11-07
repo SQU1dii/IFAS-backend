@@ -1,40 +1,53 @@
-/**
- * Auth controller — thin; all logic lives in the service.
- * Extracts IP for audit logging without trusting headers that could be spoofed
- * (x-forwarded-for is only used when app.set('trust proxy', 1) is active).
- */
+'use strict';
 const authService = require('../services/auth.service');
 const asyncHandler = require('../utils/asyncHandler');
+const { ok, created } = require('../utils/response');
 
-function getIp(req) {
-  return req.ip || req.socket?.remoteAddress || null;
-}
+function ip(req) { return req.ip || req.socket?.remoteAddress || null; }
 
 const register = asyncHandler(async (req, res) => {
-  const result = await authService.register(req.body, getIp(req));
-  res.status(201).json(result);
+  const data = await authService.register(req.body, res, ip(req));
+  created(res, data, null, 'Account created.');
 });
 
 const login = asyncHandler(async (req, res) => {
-  const result = await authService.login(req.body, getIp(req));
-  res.json(result);
+  const data = await authService.login(req.body, res, ip(req));
+  ok(res, data, null, 'Logged in.');
 });
 
 const logout = asyncHandler(async (req, res) => {
-  // refresh_token may come from body or the Authorization header context.
-  const raw_refresh = req.body?.refresh_token;
-  await authService.logout(raw_refresh, req.user?.id ?? null, getIp(req));
-  res.json({ message: 'Logged out successfully.' });
+  const data = await authService.logout(req, res, ip(req));
+  ok(res, data, null, 'Logged out.');
 });
 
 const refresh = asyncHandler(async (req, res) => {
-  const result = await authService.refresh(req.body?.refresh_token, getIp(req));
-  res.json(result);
+  const data = await authService.refresh(req, res, ip(req));
+  ok(res, data, null, 'Token refreshed.');
 });
 
 const me = asyncHandler(async (req, res) => {
-  const user = await authService.me(req.user.id);
-  res.json({ user });
+  const data = await authService.me(req.user.id);
+  ok(res, data);
 });
 
-module.exports = { register, login, logout, refresh, me };
+const updateProfile = asyncHandler(async (req, res) => {
+  const data = await authService.updateProfile(req.user.id, req.body);
+  ok(res, data, null, 'Profile updated.');
+});
+
+const changePassword = asyncHandler(async (req, res) => {
+  const data = await authService.changePassword(req.user.id, req.body);
+  ok(res, data, null, data.message);
+});
+
+const forgotPassword = asyncHandler(async (req, res) => {
+  const data = await authService.forgotPassword(req.body.email);
+  ok(res, data, null, data.message);
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+  const data = await authService.resetPassword(req.body);
+  ok(res, data, null, data.message);
+});
+
+module.exports = { register, login, logout, refresh, me, updateProfile, changePassword, forgotPassword, resetPassword };

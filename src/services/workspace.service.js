@@ -22,6 +22,30 @@ const { ROLES, ROLES_BY_WORKSPACE_TYPE, OWNER_ROLES, PERMISSIONS } = require('..
 
 function db() { return getKnex(); }
 
+/**
+ * Map a frontend simple role (owner/admin/manager/member/viewer) to the
+ * correct workspace role NAME for the given workspace type.
+ */
+function _resolveRoleName(workspaceType, simpleRole) {
+  const r = String(simpleRole || '').toLowerCase();
+  const allowed = ROLES_BY_WORKSPACE_TYPE[workspaceType] || [];
+  if (allowed.includes(simpleRole)) return simpleRole; // already a full role name
+  if (workspaceType === 'PERSONAL') return ROLES.PERSONAL_OWNER;
+  if (workspaceType === 'BUSINESS') {
+    if (r === 'owner' || r === 'admin') return ROLES.BUSINESS_OWNER;
+    if (r === 'manager') return ROLES.BUSINESS_MANAGER;
+    if (r === 'viewer') return ROLES.BUSINESS_VIEWER;
+    return ROLES.BUSINESS_STAFF; // member
+  }
+  if (workspaceType === 'ORGANIZATION') {
+    if (r === 'owner' || r === 'admin') return ROLES.ORG_ADMIN;
+    if (r === 'manager') return ROLES.ORG_FINANCE_OFFICER;
+    if (r === 'viewer') return ROLES.ORG_MEMBER;
+    return ROLES.ORG_MEMBER; // member
+  }
+  return allowed[0];
+}
+
 // ── Workspace CRUD ────────────────────────────────────────────────────────────
 
 async function createWorkspace({ name, workspace_type, currency = 'KES' }, userId, ipAddress) {
@@ -79,42 +103,49 @@ async function listMembers(workspaceId) {
   return memberRepo.listMembers(workspaceId);
 }
 
-async function addMember({ workspaceId, targetUserId, roleName, departmentId }, actorId, ipAddress) {
+async function addMember({ workspaceId, targetUserId, roleName, departmentId, email, simpleRole }, actorId, ipAddress) {
   const workspace = await workspaceRepo.findById(workspaceId);
   if (!workspace) throw notFound('Workspace not found.', 'WORKSPACE_NOT_FOUND');
 
-  // Validate target user exists.
-  const user = await userRepo.findById(targetUserId);
-  if (!user) throw notFound('User not found.', 'USER_NOT_FOUND');
+  // Resolve the target user: by user_id (API) or by email (frontend invite).
+  let user = null;
+  if (targetUserId) {
+    user = await userRepo.findById(targetUserId);
+  } else if (email) {
+    user = await userRepo.findByEmail(email);
+  }
+  if (!user) throw notFound('User not found. They must register first before being invited.', 'USER_NOT_FOUND');
 
-  // Validate role is allowed for this workspace type.
+  // Resolve the role name — accept either a full role name (API) or a simple
+  // role string (frontend: owner/admin/manager/member/viewer).
+  const resolvedRoleName = _resolveRoleName(workspace.workspace_type, roleName || simpleRole);
   const allowed = ROLES_BY_WORKSPACE_TYPE[workspace.workspace_type];
-  if (!allowed.includes(roleName)) {
-    throw badRequest(`Role '${roleName}' is not valid for ${workspace.workspace_type} workspaces.`, { role_name: `Must be one of: ${allowed.join(', ')}` }, 'INVALID_ROLE');
+  if (!allowed.includes(resolvedRoleName)) {
+    throw badRequest(`Role is not valid for ${workspace.workspace_type} workspaces.`, { role: `Must be one of: ${allowed.join(', ')}` }, 'INVALID_ROLE');
   }
 
   // Department required/forbidden based on role and type.
   if (workspace.workspace_type !== 'ORGANIZATION' && departmentId) {
     throw badRequest('Department is only valid for ORGANIZATION workspaces.', null, 'INVALID_DEPARTMENT');
   }
-  if (roleName === ROLES.ORG_DEPT_HEAD && !departmentId) {
+  if (resolvedRoleName === ROLES.ORG_DEPT_HEAD && !departmentId) {
     throw badRequest('Department Head must be assigned to a department.', { department_id: 'Required for Department Head' }, 'DEPT_HEAD_NEEDS_DEPT');
   }
 
   // Check not already a member.
-  const existing = await memberRepo.findMembership(workspaceId, targetUserId);
+  const existing = await memberRepo.findMembership(workspaceId, user.id);
   if (existing) throw conflict('User is already a member of this workspace.', null, 'ALREADY_MEMBER');
 
-  const role = await roleRepo.findByName(roleName);
+  const role = await roleRepo.findByName(resolvedRoleName);
   if (!role) throw badRequest('Role not found.', null, 'ROLE_NOT_FOUND');
 
-  await memberRepo.addMember({ workspace_id: workspaceId, user_id: targetUserId, role_id: role.id, department_id: departmentId ?? null });
-  await audit.log({ workspace_id: workspaceId, user_id: actorId, action: 'members.add', entity_type: 'user', entity_id: targetUserId, ip_address: ipAddress, metadata: { role_name: roleName } });
+  await memberRepo.addMember({ workspace_id: workspaceId, user_id: user.id, role_id: role.id, department_id: departmentId ?? null });
+  await audit.log({ workspace_id: workspaceId, user_id: actorId, action: 'members.add', entity_type: 'user', entity_id: user.id, ip_address: ipAddress, metadata: { role_name: resolvedRoleName } });
 
   return memberRepo.listMembers(workspaceId);
 }
 
-async function updateMember({ workspaceId, memberId, roleName, departmentId }, actorId, ipAddress) {
+async function updateMember({ workspaceId, memberId, roleName, simpleRole, departmentId }, actorId, ipAddress) {
   const workspace = await workspaceRepo.findById(workspaceId);
   if (!workspace) throw notFound('Workspace not found.', 'WORKSPACE_NOT_FOUND');
 
@@ -123,17 +154,19 @@ async function updateMember({ workspaceId, memberId, roleName, departmentId }, a
 
   const patch = {};
 
-  if (roleName !== undefined) {
+  const roleInput = roleName || simpleRole;
+  if (roleInput !== undefined) {
+    const resolvedRoleName = _resolveRoleName(workspace.workspace_type, roleInput);
     const allowed = ROLES_BY_WORKSPACE_TYPE[workspace.workspace_type];
-    if (!allowed.includes(roleName)) {
-      throw badRequest(`Role '${roleName}' is not valid for this workspace.`, { role_name: `Must be one of: ${allowed.join(', ')}` }, 'INVALID_ROLE');
+    if (!allowed.includes(resolvedRoleName)) {
+      throw badRequest(`Role is not valid for this workspace.`, { role: `Must be one of: ${allowed.join(', ')}` }, 'INVALID_ROLE');
     }
-    const role = await roleRepo.findByName(roleName);
+    const role = await roleRepo.findByName(resolvedRoleName);
     if (!role) throw badRequest('Role not found.', null, 'ROLE_NOT_FOUND');
 
     // Guard: last owner/admin cannot be demoted.
     const ownerRoleNames = OWNER_ROLES[workspace.workspace_type];
-    if (ownerRoleNames.includes(member.role_name) && !ownerRoleNames.includes(roleName)) {
+    if (ownerRoleNames.includes(member.role_name) && !ownerRoleNames.includes(resolvedRoleName)) {
       const ownerRoles = await Promise.all(ownerRoleNames.map((n) => roleRepo.findByName(n)));
       const ownerRoleIds = ownerRoles.filter(Boolean).map((r) => r.id);
       const ownerCount = await memberRepo.countOwners(workspaceId, ownerRoleIds);
@@ -190,27 +223,37 @@ function assertOrganization(workspace) {
 }
 
 async function listDepartments(workspaceId) {
-  return departmentRepo.list(workspaceId);
+  const departments = await departmentRepo.list(workspaceId);
+  // Enrich each with spent (sum of POSTED EXPENSE transactions for that dept).
+  const txnRepo = require('../repositories/transactionRepository');
+  for (const d of departments) {
+    d.spent = await txnRepo.sumExpenses(workspaceId, { departmentId: d.id });
+  }
+  return departments;
 }
 
-async function createDepartment({ workspaceId, name }, actorId, ipAddress) {
+async function createDepartment({ workspaceId, name, budget = 0, head_name = '' }, actorId, ipAddress) {
   const workspace = await workspaceRepo.findById(workspaceId);
   assertOrganization(workspace);
   const existing = await departmentRepo.list(workspaceId);
   if (existing.find((d) => d.name.toLowerCase() === name.toLowerCase())) {
     throw conflict(`A department named '${name}' already exists.`, { name: 'Already exists' }, 'DEPT_DUPLICATE');
   }
-  const dept = await departmentRepo.create(workspaceId, name);
+  const dept = await departmentRepo.create(workspaceId, { name, budget: Number(budget) || 0, head_name: head_name || '' });
   await audit.log({ workspace_id: workspaceId, user_id: actorId, action: 'departments.create', entity_type: 'department', entity_id: dept.id, ip_address: ipAddress });
   return dept;
 }
 
-async function updateDepartment({ workspaceId, deptId, name }, actorId, ipAddress) {
+async function updateDepartment({ workspaceId, deptId, name, budget, head_name }, actorId, ipAddress) {
   const workspace = await workspaceRepo.findById(workspaceId);
   assertOrganization(workspace);
   const dept = await departmentRepo.findById(workspaceId, deptId);
   if (!dept) throw notFound('Department not found.', 'DEPT_NOT_FOUND');
-  const updated = await departmentRepo.update(workspaceId, deptId, name);
+  const patch = {};
+  if (name !== undefined) patch.name = name;
+  if (budget !== undefined) patch.budget = Number(budget);
+  if (head_name !== undefined) patch.head_name = head_name;
+  const updated = await departmentRepo.update(workspaceId, deptId, patch);
   await audit.log({ workspace_id: workspaceId, user_id: actorId, action: 'departments.update', entity_type: 'department', entity_id: deptId, ip_address: ipAddress });
   return updated;
 }

@@ -1,47 +1,47 @@
 'use strict';
-const express        = require('express');
-const authenticate   = require('../middleware/authenticate');
-const loadMembership = require('../middleware/loadMembership');
+/**
+ * Analytics / dashboard / intelligence / reports / assistant routes.
+ * Mounted at /api/v1/workspaces/:workspaceId
+ */
+const express = require('express');
+const rateLimit = require('express-rate-limit');
+const authenticate      = require('../middleware/authenticate');
+const loadMembership    = require('../middleware/loadMembership');
 const requirePermission = require('../middleware/requirePermission');
-const asyncHandler   = require('../utils/asyncHandler');
-const analyticsSvc   = require('../services/analytics.service');
+const asyncHandler      = require('../utils/asyncHandler');
+const ctrl              = require('../controllers/analytics.controller');
 
 const router = express.Router({ mergeParams: true });
 const guard  = [authenticate, loadMembership];
-const wsId   = (req) => Number(req.params.workspaceId);
 
-// GET /forecast?category_id=&horizon=6
-router.get('/forecast', ...guard, requirePermission('analytics.view'),
-  asyncHandler(async (req, res) => {
-    const categoryId = req.query.category_id ? Number(req.query.category_id) : null;
-    const horizon    = Math.min(24, Math.max(1, Number(req.query.horizon ?? 6)));
-    const result = await analyticsSvc.forecast(wsId(req), categoryId, horizon);
-    res.json({ forecast: result });
-  }),
-);
+// ── Dashboard ────────────────────────────────────────────────────────────────
+router.get('/dashboard', ...guard, requirePermission('dashboard.view'), ctrl.getDashboard);
 
-// GET /recommendations
-router.get('/recommendations', ...guard, requirePermission('analytics.view'),
-  asyncHandler(async (req, res) => {
-    const recs = await analyticsSvc.listRecommendations(wsId(req));
-    res.json({ recommendations: recs });
-  }),
-);
+// ── Analytics ──────────────────────────────────────────────────────────────────
+router.get('/analytics/monthly',          ...guard, requirePermission('analytics.view'), ctrl.getMonthly);
+router.get('/analytics/categories',       ...guard, requirePermission('analytics.view'), ctrl.getCategoryAnalytics);
+router.get('/analytics/cash-flow',        ...guard, requirePermission('analytics.view'), ctrl.getCashFlow);
+router.get('/analytics/budget-performance',...guard, requirePermission('analytics.view'), ctrl.getBudgetPerformance);
+router.get('/analytics/savings-trends',   ...guard, requirePermission('analytics.view'), ctrl.getSavingsTrends);
 
-// POST /recommendations/refresh
-router.post('/recommendations/refresh', ...guard, requirePermission('analytics.view'),
-  asyncHandler(async (req, res) => {
-    const recs = await analyticsSvc.getRecommendations(wsId(req), req.workspace.workspace_type);
-    res.json({ recommendations: recs });
-  }),
-);
+// ── Intelligence ────────────────────────────────────────────────────────────────
+router.get('/insights',  ...guard, requirePermission('analytics.view'), ctrl.getInsights);
+router.get('/forecast',  ...guard, requirePermission('analytics.view'), ctrl.getForecast);
+router.get('/anomalies', ...guard, requirePermission('analytics.view'), ctrl.getAnomalies);
+router.get('/patterns',  ...guard, requirePermission('analytics.view'), ctrl.getSpendingPatterns);
 
-// DELETE /recommendations/:recId
-router.delete('/recommendations/:recId', ...guard, requirePermission('analytics.view'),
-  asyncHandler(async (req, res) => {
-    await analyticsSvc.dismissRecommendation(wsId(req), Number(req.params.recId));
-    res.json({ message: 'Recommendation dismissed.' });
-  }),
-);
+// ── Reports ───────────────────────────────────────────────────────────────────
+router.get('/reports', ...guard, requirePermission('reports.generate'), ctrl.getReports);
+
+// ── Assistant (rate-limited) ───────────────────────────────────────────────────
+const assistantLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
+  message: { error: { code: 'RATE_LIMIT', message: 'Too many assistant requests. Please wait a minute.', fields: null } },
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
+router.post('/assistant/messages',           assistantLimiter, ...guard, requirePermission('assistant.use'), ctrl.sendMessage);
+router.get( '/assistant/conversations',      ...guard, requirePermission('assistant.use'), ctrl.listConversations);
+router.get( '/assistant/conversations/:convId', ...guard, requirePermission('assistant.use'), ctrl.getConversation);
 
 module.exports = router;

@@ -39,5 +39,6 @@ router.post( '/transactions',            ...guard, requirePermission('transactio
 router.get(  '/transactions/:txnId',     ...guard, requirePermission('transactions.view'),   ctrl.getTransaction);
 router.patch('/transactions/:txnId',     ...guard, requirePermission('transactions.edit'),   validate(V.updateTransactionSchema), ctrl.updateTransaction);
 router.post( '/transactions/:txnId/void',...guard, requirePermission('transactions.edit'),   validate(V.voidTransactionSchema), ctrl.voidTransaction);
+router.delete('/transactions/:txnId',    ...guard, requirePermission('transactions.edit'),   ctrl.deleteTransaction);
 
 module.exports = router;

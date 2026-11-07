@@ -3,26 +3,32 @@ const { getKnex } = require('../config/database');
 const T = 'transactions';
 const db = () => getKnex();
 
-/** List transactions with optional filters and cursor-based pagination. */
+/** List transactions with optional filters and pagination. */
 async function list(wsId, filters = {}, departmentScope = null) {
   const {
     page = 1, page_size = 50,
-    txn_type, status, account_id, category_id, department_id,
-    date_from, date_to,
+    txn_type, type, status, account_id, category_id, department_id,
+    date_from, from, date_to, to, search,
   } = filters;
+
+  // Accept frontend param aliases
+  const effectiveType = (txn_type || type || '').toString().toUpperCase();
+  const dateFrom = date_from || from;
+  const dateTo   = date_to || to;
 
   let q = db()(T).where({ workspace_id: wsId });
 
-  // Department Head scope: only see their department
   if (departmentScope) q = q.where({ department_id: departmentScope });
-
-  if (txn_type)     q = q.where({ txn_type });
-  if (status)       q = q.where({ status });
-  if (account_id)   q = q.where({ account_id: Number(account_id) });
-  if (category_id)  q = q.where({ category_id: Number(category_id) });
-  if (department_id) q = q.where({ department_id: Number(department_id) });
-  if (date_from)    q = q.where('txn_date', '>=', date_from);
-  if (date_to)      q = q.where('txn_date', '<=', date_to);
+  if (effectiveType)   q = q.where({ txn_type: effectiveType });
+  if (status)          q = q.where({ status });
+  if (account_id)      q = q.where({ account_id: Number(account_id) });
+  if (category_id)     q = q.where({ category_id: Number(category_id) });
+  if (department_id)   q = q.where({ department_id: Number(department_id) });
+  if (dateFrom)        q = q.where('txn_date', '>=', dateFrom);
+  if (dateTo)          q = q.where('txn_date', '<=', dateTo);
+  if (search) {
+    q = q.where((row) => String(row.description || '').toLowerCase().includes(search.toLowerCase()));
+  }
 
   const countQ = q.clone().count('id as cnt');
   const [{ cnt }] = await countQ;
