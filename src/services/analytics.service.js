@@ -27,6 +27,7 @@ const logger     = require('../config/logger');
 const { getKnex }= require('../config/database');
 const txnRepo    = require('../repositories/transactionRepository');
 const alertRepo  = require('../repositories/alertRepository');
+const budgetSvc  = require('./budget.service');
 const { serviceUnavailable, badRequest } = require('../utils/errors');
 const { MIN_FORECAST_MONTHS } = require('../config/constants');
 
