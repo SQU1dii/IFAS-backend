@@ -43,5 +43,7 @@ const assistantLimiter = rateLimit({
 router.post('/assistant/messages',           assistantLimiter, ...guard, requirePermission('assistant.use'), ctrl.sendMessage);
 router.get( '/assistant/conversations',      ...guard, requirePermission('assistant.use'), ctrl.listConversations);
 router.get( '/assistant/conversations/:convId', ...guard, requirePermission('assistant.use'), ctrl.getConversation);
+router.delete('/assistant/conversations/:convId', ...guard, requirePermission('assistant.use'), ctrl.deleteConversation);
+router.get( '/assistant/conversations/:convId/export', ...guard, requirePermission('assistant.use'), ctrl.exportConversation);
 
 module.exports = router;

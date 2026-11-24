@@ -87,7 +87,8 @@ const sendMessage = asyncHandler(async (req, res) => {
   const { content, conversation_id } = req.body;
   if (!content) throw badRequest('content is required.', { content: 'Required' });
   const result = await assistantSvc.sendMessage(req.workspace, req.user.id, req.membership, content, conversation_id ?? null);
-  ok(res, result, null, 'Message sent.');
+  // Return structured response for enhanced frontend rendering
+  ok(res, result.structured || result, null, 'Message sent.');
 });
 const listConversations = asyncHandler(async (req, res) => {
   const data = await assistantSvc.listConversations(wsId(req), req.user.id);
@@ -97,11 +98,21 @@ const getConversation = asyncHandler(async (req, res) => {
   const data = await assistantSvc.getConversation(wsId(req), req.user.id, Number(req.params.convId));
   ok(res, data);
 });
+const deleteConversation = asyncHandler(async (req, res) => {
+  const data = await assistantSvc.deleteConversation(wsId(req), req.user.id, Number(req.params.convId));
+  ok(res, data, null, 'Conversation deleted.');
+});
+const exportConversation = asyncHandler(async (req, res) => {
+  const { filename, content } = await assistantSvc.exportConversation(wsId(req), req.user.id, Number(req.params.convId));
+  res.setHeader('Content-Type', 'text/markdown');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(content);
+});
 
 module.exports = {
   getDashboard,
   getMonthly, getCategoryAnalytics, getCashFlow, getBudgetPerformance, getSavingsTrends,
   getInsights, getForecast, getAnomalies, getSpendingPatterns,
   getReports,
-  sendMessage, listConversations, getConversation,
+  sendMessage, listConversations, getConversation, deleteConversation, exportConversation,
 };

@@ -8,6 +8,9 @@ const list = (wsId, { status } = {}) => {
   return q;
 };
 
+const listOpen = (wsId, { limit = 10 } = {}) =>
+  db()('alerts').where({ workspace_id: wsId, status: 'OPEN' }).orderBy('created_at', 'desc').limit(limit);
+
 const findById = (wsId, id) => db()('alerts').where({ workspace_id: wsId, id }).first();
 
 const countOpen = async (wsId) => {
@@ -17,4 +20,4 @@ const countOpen = async (wsId) => {
 
 const update = (id, patch) => db()('alerts').where({ id }).update(patch);
 
-module.exports = { list, findById, countOpen, update };
+module.exports = { list, listOpen, findById, countOpen, update };
