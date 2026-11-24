@@ -1,7 +1,6 @@
 # IFAS — Intelligent Financial Analytics System (Backend API)
 
-Node.js/Express REST API for a multi-workspace finance platform supporting
-PERSONAL, BUSINESS and ORGANIZATION workspaces.
+Node.js/Express REST API for a multi-workspace financial analytics platform supporting Personal, Business, and Organisation workspaces. Includes JWT authentication with rotating refresh tokens, role-based access control, CSV/PDF transaction import, analytics, forecasting, anomaly detection, and an AI financial assistant.
 
 ---
 
@@ -9,23 +8,22 @@ PERSONAL, BUSINESS and ORGANIZATION workspaces.
 
 | Layer | Choice | Reason |
 |---|---|---|
-| Runtime | Node.js 20+ (LTS) | Fast, huge ecosystem, non-blocking I/O |
-| Framework | Express 4 | Minimal, well-understood, rich middleware |
-| ORM/Query | Knex + mysql2 | Parameterised queries by default; portable migrations; composite FKs work cleanly; no code-gen overhead |
-| Auth | JWT (short-lived) + rotating refresh tokens (hashed in DB) | Stateless verification on every request; refresh rotation lets logout actually revoke sessions |
-| Password hashing | bcryptjs | Pure-JS bcrypt-compatible; no native build required |
-| Validation | Zod | TypeScript-friendly schema; great error messages; strips unknown keys |
-| CSV import | multer + csv-parse | Standard multipart upload; stream-capable parser |
-| HTTP client | Axios | Retry/timeout wrappers around the FastAPI analytics service |
+| Runtime | Node.js 20+ | Non-blocking I/O, large ecosystem |
+| Framework | Express 4 | Minimal, well-understood, composable middleware |
+| Database | MySQL 8 + Knex | ACID compliance for financial data; parameterised queries; portable migrations |
+| Auth | JWT + rotating refresh tokens | Stateless access tokens; refresh rotation lets logout actually revoke sessions |
+| Password hashing | bcryptjs | Pure-JS, no native build required |
+| Validation | Zod | Schema-first; great error messages; strips unknown keys |
+| CSV import | csv-parse | Stream-capable, handles quoted fields |
+| HTTP client | Axios | Calls the Python analytics service |
 | Security | helmet, cors, express-rate-limit | Standard Express hardening |
-| Tests | Jest + Supertest + in-memory mock DB | Zero external services needed; full stack exercised |
 
 ---
 
 ## Prerequisites
 
 - Node.js ≥ 20
-- MySQL 8 (for production; tests use an in-memory mock — no DB needed)
+- MySQL 8
 - npm ≥ 10
 
 ---
@@ -33,203 +31,92 @@ PERSONAL, BUSINESS and ORGANIZATION workspaces.
 ## Quick Start
 
 ```bash
-# 1. Clone and install
+# 1. Install dependencies
 npm install
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET
+# 2. Create your environment file (see Environment Variables section below)
 
 # 3. Create the MySQL database
-mysql -u root -p -e "CREATE DATABASE ifas CHARACTER SET utf8mb4;"
+mysql -u root -p -e "CREATE DATABASE ifas CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# 4. Run migrations + RBAC seed
+# 4. Run migrations and seed RBAC data
 npm run db:setup
 
-# 5. (Optional) Seed training data for all three workspace types
-node seeds/trainingData.js
-# Login: demo@ifas.dev / Demo1234!
-
-# 6. Start the server
-npm run dev     # nodemon (watch mode)
-npm start       # production
+# 5. Start the development server
+npm run dev
 ```
+
+The API listens on `http://localhost:4000`.
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env`. Required variables:
+Create a file called `.env` in this directory with the following variables:
 
-| Variable | Description | Example |
-|---|---|---|
-| `NODE_ENV` | `development` / `production` / `test` | `development` |
-| `PORT` | HTTP port | `4000` |
-| `CORS_ORIGIN` | Comma-separated allowed origins | `http://localhost:5173` |
-| `DB_HOST` | MySQL host | `127.0.0.1` |
-| `DB_PORT` | MySQL port | `3306` |
-| `DB_NAME` | Database name | `ifas` |
-| `DB_USER` | MySQL user | `ifas` |
-| `DB_PASSWORD` | MySQL password | *(secret)* |
-| `JWT_ACCESS_SECRET` | Access token signing secret (≥32 chars) | *(secret)* |
-| `JWT_REFRESH_SECRET` | Refresh token signing secret (≥32 chars) | *(secret)* |
-| `JWT_ACCESS_EXPIRES_IN` | Access token lifetime | `15m` |
-| `JWT_REFRESH_EXPIRES_DAYS` | Refresh token lifetime in days | `7` |
-| `BCRYPT_ROUNDS` | bcrypt cost factor | `12` |
-| `ANALYTICS_SERVICE_URL` | Python FastAPI analytics service | `http://127.0.0.1:8001` |
-| `ANALYTICS_MODE` | `mock` (default) or `live` | `mock` |
-| `AI_PROVIDER_URL` | OpenAI-compatible chat completions URL | `http://127.0.0.1:8002/v1/chat/completions` |
-| `AI_PROVIDER_API_KEY` | AI provider key | *(secret)* |
-| `AI_MODE` | `mock` (default) or `live` | `mock` |
-| `LOG_LEVEL` | `error` / `warn` / `info` / `debug` | `info` |
+```env
+# Server
+NODE_ENV=development
+PORT=4000
+
+# Comma-separated list of allowed CORS origins (must include your frontend URL)
+CORS_ORIGIN=http://localhost:5173,http://localhost:5174
+
+# Database (MySQL 8)
+DB_CLIENT=mysql2
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=ifas
+DB_USER=ifas
+DB_PASSWORD=your_database_password
+DB_CONNECTION_LIMIT=10
+
+# Auth / JWT
+# Use long random strings (minimum 32 characters each)
+JWT_ACCESS_SECRET=replace-with-a-random-string-at-least-32-chars
+JWT_REFRESH_SECRET=replace-with-a-different-random-string-32-chars
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_DAYS=7
+BCRYPT_ROUNDS=12
+
+# Analytics service (Python FastAPI on port 8001)
+# Leave ANALYTICS_MODE=mock to use the built-in JS fallback (no Python needed)
+ANALYTICS_SERVICE_URL=http://127.0.0.1:8001
+ANALYTICS_TIMEOUT_MS=15000
+ANALYTICS_MAX_RETRIES=2
+ANALYTICS_MODE=mock
+
+# AI assistant
+# Leave AI_MODE=mock to use the built-in keyword-based mock (no API key needed)
+AI_PROVIDER_URL=http://127.0.0.1:8002/v1/chat/completions
+AI_PROVIDER_API_KEY=your_ai_provider_key
+AI_PROVIDER_MODEL=ifas-assistant
+AI_TIMEOUT_MS=30000
+AI_MODE=mock
+
+# Logging
+LOG_LEVEL=info
+```
+
+> **Note:** `.env` is excluded from this repository. Never commit real secrets, passwords, or API keys to git.
 
 ---
 
-## Running Tests
+## Available Scripts
 
-```bash
-# All tests (no MySQL needed — in-memory mock DB)
-npm test
-
-# Unit tests only
-npm run test:unit
-
-# Integration tests only
-npm run test:integration
-```
-
-The test suite uses a pure-JavaScript in-memory Knex-compatible mock
-(`tests/lib/memoryKnex.js`) that enforces the same composite foreign-key
-constraints as MySQL. No native dependencies, no database installation needed.
-
----
-
-## Mock Services
-
-For local development without a real Python analytics service or AI API key:
-
-```bash
-# Mock FastAPI analytics service (port 8001)
-npm run mock:analytics
-
-# Mock AI provider — OpenAI-compatible (port 8002)
-npm run mock:ai
-```
-
-Both are controlled by `ANALYTICS_MODE=mock` and `AI_MODE=mock` in `.env`
-(the default), which bypasses HTTP entirely and calls the in-process mock logic.
-
----
-
-## API Overview
-
-All endpoints are under `/api/v1`. Full spec: `openapi.yaml`.
-
-### Authentication
-
-```
-POST /auth/register   → { user, access_token, refresh_token }
-POST /auth/login      → { user, access_token, refresh_token }
-POST /auth/logout     → revoke refresh token
-POST /auth/refresh    → rotate token pair
-GET  /auth/me         → current user
-```
-
-### Workspaces
-
-```
-GET    /workspaces                     list my workspaces
-POST   /workspaces                     create workspace
-GET    /workspaces/:id                 detail + my role + permissions
-PATCH  /workspaces/:id                 update
-GET/POST/PATCH/DELETE /workspaces/:id/members
-GET/POST/PATCH/DELETE /workspaces/:id/departments  (ORGANIZATION only)
-```
-
-### Financial (all workspace-scoped)
-
-```
-/accounts      CRUD
-/categories    CRUD
-/transactions  list (paginated, filtered) · create · edit · void (never delete)
-/imports       upload CSV → preview → confirm · rejected CSV download
-/budgets       CRUD · GET /budgets/:id/status (% used)
-/goals         CRUD  (PERSONAL workspaces only)
-/alerts        list · PATCH /review · PATCH /dismiss
-/dashboard     GET  (shaped by workspace type + role)
-/reports       GET  (CSV download)
-/forecast      GET  (≥6 months history required)
-/recommendations  GET · POST /refresh · DELETE /:id
-/assistant/messages           POST
-/assistant/conversations      GET
-/assistant/conversations/:id  GET
-```
-
-### Platform Admin
-
-```
-GET    /admin/users            list all users (no financial data)
-PATCH  /admin/users/:id        deactivate / update
-GET    /admin/audit-log        last 200 audit entries
-```
-
----
-
-## CSV Import Format
-
-```
-ref,date,description,amount,type,account,to_account,category,department
-PER-000001,2026-01-15,Monthly salary,120000,INCOME,Bank Account,,Salary,
-PER-000002,2026-01-05,House rent,28000,EXPENSE,Bank Account,,Rent,
-PER-000003,2026-01-29,Monthly savings,10000,TRANSFER,Bank Account,Savings Account,,
-```
-
-- `ref`: optional external reference; ignored on import
-- `date`: YYYY-MM-DD
-- `amount`: positive number (sign carried by `type`)
-- `type`: INCOME / EXPENSE / TRANSFER
-- `account`: must match an existing account name in the workspace
-- `to_account`: TRANSFER only
-- `category`: required for INCOME/EXPENSE; must exist in the workspace
-- `department`: ORGANIZATION workspaces; must exist
-
----
-
-## Training Data Integration
-
-The `IFAS_training_data/` folder contains 36 months of synthetic financial
-data for all three workspace types. Run the training-data seeder to populate
-a demo environment:
-
-```bash
-node seeds/trainingData.js
-```
-
-This creates three workspaces (PERSONAL, BUSINESS, ORGANIZATION) for
-`demo@ifas.dev` with all accounts, categories, departments, budgets, savings
-goals, and ~6 000 transactions pre-loaded — perfect for:
-
-- Testing the `/forecast` endpoint (36 months of history)
-- Exercising the unusual-spending detector
-- Evaluating the AI assistant against `assistant_eval_questions.csv`
-
----
-
-## Security Notes
-
-1. **Workspace isolation** — every query is scoped by `workspace_id` taken
-   from the verified membership, never from the request body.
-2. **Composite foreign keys** — `transactions(workspace_id, account_id)` →
-   `accounts(workspace_id, id)` makes cross-workspace references structurally
-   impossible at the database level.
-3. **AI provider privacy** — only aggregated figures (totals, counts,
-   percentages) are sent to the AI provider. Raw descriptions, account names,
-   and member details never leave the server.
-4. **Refresh token rotation** — every `/auth/refresh` call revokes the old
-   token and issues a new one. Logout revokes the token immediately.
-5. **Rate limiting** — auth routes: 20 req / 15 min. Assistant: 20 req / min.
-6. **Parameterised queries** — Knex enforces parameterisation; no raw SQL
-   strings in application code.
+| Command | Description |
+|---|---|
+| `npm run dev` | Start dev server with nodemon (auto-restart on file changes) |
+| `npm start` | Start server without nodemon (production) |
+| `npm run migrate` | Run pending database migrations |
+| `npm run migrate:rollback` | Roll back the last migration batch |
+| `npm run seed` | Run all seed files |
+| `npm run db:setup` | Run migrations + seeds in one step |
+| `npm test` | Run all tests (no MySQL needed) |
+| `npm run test:unit` | Unit tests only |
+| `npm run test:integration` | Integration tests only |
+| `npm run mock:analytics` | Start mock FastAPI analytics server (port 8001) |
+| `npm run mock:ai` | Start mock AI provider server (port 8002) |
 
 ---
 
@@ -237,40 +124,236 @@ goals, and ~6 000 transactions pre-loaded — perfect for:
 
 ```
 src/
-  config/       index.js · database.js · logger.js · constants.js
-  middleware/   authenticate.js · loadMembership.js · requirePermission.js
-                validate.js · errorHandler.js · notFound.js
-  routes/       auth · workspace · financial · import · budget
-                dashboard · analytics · assistant · admin
-  controllers/  auth · workspace · financial
-  services/     auth · workspace · account · category · transaction
-                import · budget · dashboard · analytics · assistant
-  repositories/ user · token · audit · workspace · member · department
-                role · category · account · transaction · alert
-  validators/   auth · workspace · financial · budget
-  utils/        errors · asyncHandler · jwt · csvParser
+├── server.js              # Entry point — creates app and starts listening
+├── app.js                 # Express app setup: middleware, routes, error handler
+│
+├── config/
+│   ├── constants.js       # All enums in one place: WORKSPACE_TYPES, ACCOUNT_TYPES,
+│   │                      # PERMISSIONS, ROLES, ROLE_PERMISSIONS, DEFAULT_CATEGORIES
+│   ├── database.js        # Knex instance with connection pool
+│   ├── index.js           # Reads env vars, validates required ones, exports config
+│   └── logger.js          # Pino JSON logger
+│
+├── middleware/
+│   ├── authenticate.js    # Verifies JWT, attaches req.user
+│   ├── loadMembership.js  # Verifies workspace membership, attaches req.membership
+│   ├── requirePermission.js # Checks req.membership.permissions for required code
+│   ├── validate.js        # Zod schema validation on req.body — returns 422 on failure
+│   ├── errorHandler.js    # Maps errors to { error: { code, message, fields } }
+│   └── notFound.js        # 404 handler for unmatched routes
+│
+├── routes/
+│   ├── auth.routes.js         # /auth/*
+│   ├── workspace.routes.js    # /workspaces, /workspaces/:id, members, departments
+│   ├── financial.routes.js    # /transactions, /accounts, /categories
+│   ├── import.routes.js       # /imports (preview + confirm)
+│   ├── budget.routes.js       # /budgets, /goals
+│   ├── dashboard.routes.js    # /dashboard
+│   ├── analytics.routes.js    # /analytics/*
+│   ├── intelligence.routes.js # /insights, /forecast, /anomalies, /alerts
+│   └── report.routes.js       # /reports
+│
+├── controllers/           # Thin layer: validate → call service → format response
+├── services/              # Business logic (never touches req/res)
+├── repositories/          # Raw Knex queries (no business logic)
+├── validators/            # Zod schemas for each endpoint
+└── utils/
+    ├── errors.js          # AppError class with HTTP status codes
+    ├── asyncHandler.js    # Wraps async controllers to catch thrown errors
+    ├── jwt.js             # Sign/verify/decode JWT helpers
+    └── csvParser.js       # Shared CSV parsing logic
 
-tests/
-  lib/          memoryKnex.js (in-memory DB mock) · seed.js
-  setup.js      Jest global setup (injects mock DB, seeds RBAC)
-  unit/         jwt · authValidators · permissions
-  integration/  auth · workspace · financial
-
-mocks/
-  analytics/    mockAnalyticsService.js  (Express, port 8001)
-  ai/           mockAiProvider.js        (OpenAI-compatible, port 8002)
-
+migrations/                # Knex migration files (create all 26 tables)
 seeds/
-  seed.js           RBAC + category templates (run by npm run db:setup)
-  trainingData.js   IFAS training data seeder (run manually)
-
-schema.sql    Authoritative MySQL 8 DDL
-seed.sql      Authoritative MySQL seed (mirrors seeds/seed.js)
-openapi.yaml  Full OpenAPI 3.1 specification
+  ├── seed.js              # RBAC: roles, permissions, role_permissions, category templates
+  └── trainingData.js      # Optional: seeds 36 months of demo data for demo@ifas.dev
+mocks/
+  ├── analytics/           # Mock FastAPI analytics server (port 8001)
+  └── ai/                  # Mock OpenAI-compatible AI server (port 8002)
+tests/
+  ├── lib/                 # In-memory Knex mock — no MySQL needed for tests
+  ├── setup.js             # Jest global setup
+  ├── unit/                # JWT, validators, permission logic
+  └── integration/         # Auth, workspace, financial endpoints
 ```
 
 ---
 
-## Assumptions & Open Questions
+## API Reference
 
-See `ASSUMPTIONS.md`.
+All endpoints are prefixed with `/api/v1`. Full specification: `openapi.yaml`.
+
+### Authentication (`/auth`)
+
+```
+POST /auth/register          Create account → { accessToken, user }
+POST /auth/login             Login → { accessToken, user } + sets HttpOnly cookie
+POST /auth/logout            Revoke refresh token + clear cookie
+POST /auth/refresh           Rotate token pair using HttpOnly cookie
+GET  /auth/me                Current user profile
+PATCH /auth/me               Update name, email, currency, date format, theme
+PATCH /auth/me/password      Change password
+POST /auth/forgot-password   Send password reset link
+POST /auth/reset-password    Set new password from token
+```
+
+### Workspaces (`/workspaces`)
+
+```
+GET    /workspaces                       List my workspaces (with my_role + my_permissions)
+POST   /workspaces                       Create workspace (seeds default categories automatically)
+GET    /workspaces/:id                   Workspace detail + my role + permissions
+PATCH  /workspaces/:id                   Update name or currency
+
+GET    /workspaces/:id/members           List members with roles
+POST   /workspaces/:id/members           Invite member by email
+PATCH  /workspaces/:id/members/:mid      Change role
+DELETE /workspaces/:id/members/:mid      Remove member
+
+GET    /workspaces/:id/departments       List departments (ORGANIZATION only)
+POST   /workspaces/:id/departments       Create department
+PATCH  /workspaces/:id/departments/:did  Update
+DELETE /workspaces/:id/departments/:did  Delete
+```
+
+### Financial data (all workspace-scoped)
+
+```
+# Accounts
+GET    /workspaces/:id/accounts          List (includes inactive)
+POST   /workspaces/:id/accounts          Create
+PATCH  /workspaces/:id/accounts/:aid     Update
+DELETE /workspaces/:id/accounts/:aid     Soft-delete (is_active = false)
+
+# Categories
+GET    /workspaces/:id/categories        List (INCOME + EXPENSE)
+POST   /workspaces/:id/categories        Create { name, type }
+PATCH  /workspaces/:id/categories/:cid   Rename
+DELETE /workspaces/:id/categories/:cid   Delete
+
+# Transactions
+GET    /workspaces/:id/transactions      List (paginated, filtered by type/category/account/date)
+POST   /workspaces/:id/transactions      Create
+GET    /workspaces/:id/transactions/:tid Detail
+PATCH  /workspaces/:id/transactions/:tid Update
+DELETE /workspaces/:id/transactions/:tid Hard delete
+POST   /workspaces/:id/transactions/:tid/void  Soft-delete (status = VOID, kept for audit)
+
+# CSV Import (two-step)
+POST   /workspaces/:id/imports           Preview: validate rows, return errors
+POST   /workspaces/:id/imports/:iid/confirm  Confirm: insert valid rows
+
+# Budgets
+GET    /workspaces/:id/budgets/status    List with spent/remaining/utilization/status
+POST   /workspaces/:id/budgets           Create { category_id, limit, period }
+PATCH  /workspaces/:id/budgets/:bid      Update
+DELETE /workspaces/:id/budgets/:bid      Delete
+
+# Savings Goals (PERSONAL workspaces)
+GET    /workspaces/:id/savings-goals     List (enriched: progress_pct, days_remaining)
+POST   /workspaces/:id/savings-goals     Create
+PATCH  /workspaces/:id/savings-goals/:gid  Update
+DELETE /workspaces/:id/savings-goals/:gid  Delete + cascade contributions
+
+GET    /workspaces/:id/savings-goals/:gid/contributions  List history
+POST   /workspaces/:id/savings-goals/:gid/contributions  Add contribution or withdrawal
+```
+
+### Analytics & Intelligence
+
+```
+GET /workspaces/:id/dashboard            Summary + charts + budgets + insights
+GET /workspaces/:id/analytics/monthly    Month-by-month income/expenses/net
+GET /workspaces/:id/analytics/categories Spending by category + trends
+GET /workspaces/:id/analytics/cash-flow  Cumulative cash flow series
+GET /workspaces/:id/analytics/budget-performance  Planned vs actual per budget
+GET /workspaces/:id/analytics/savings-trends  Balance over time per goal
+
+GET /workspaces/:id/insights             Rule-based financial insights
+GET /workspaces/:id/forecast             3-month projection (requires 6+ months history)
+GET /workspaces/:id/anomalies            Unusual transactions (z-score > 2)
+GET /workspaces/:id/patterns             Per-category spending trends
+
+GET /workspaces/:id/alerts               Open alerts
+PATCH /workspaces/:id/alerts/:aid/review   Mark reviewed
+PATCH /workspaces/:id/alerts/:aid/dismiss  Dismiss
+
+GET /workspaces/:id/reports              Period financial summary
+```
+
+### AI Assistant
+
+```
+GET  /workspaces/:id/assistant/conversations        List conversations
+GET  /workspaces/:id/assistant/conversations/:cid   Detail
+POST /workspaces/:id/assistant/messages             Send message → { message, conversation_id }
+```
+
+---
+
+## Response Format
+
+All successful responses:
+```json
+{
+  "success": true,
+  "data": { ... },
+  "meta": { "total": 100, "page": 1, "page_size": 15, "total_pages": 7 },
+  "message": null
+}
+```
+
+All error responses:
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "fields": {
+      "email": "Email is already registered",
+      "amount": "Amount must be greater than 0"
+    }
+  }
+}
+```
+
+---
+
+## Database Schema
+
+26 tables. Key design decisions:
+
+- `transactions.amount` is always positive — `type` (INCOME/EXPENSE/TRANSFER) determines direction
+- Transfers are excluded from income and expense totals in all aggregations
+- All money stored as `DECIMAL(15,2)` — floating point is never used
+- Composite foreign keys `(workspace_id, account_id)` → `accounts(workspace_id, id)` make cross-workspace references impossible at the database level
+- `transactions.status` is POSTED or VOID — voided transactions are kept for audit trails
+- Soft deletes on accounts (`is_active = false`) preserve transaction history
+
+---
+
+## Security
+
+- **Workspace isolation** — every query is scoped by `workspace_id` from the verified membership, never from the request body
+- **JWT rotation** — every `/auth/refresh` revokes the old token and issues a new pair. Logout revokes immediately
+- **AI privacy** — only aggregated figures (totals, counts, percentages) are sent to the AI provider. Raw descriptions, account names, and member details never leave the server
+- **Rate limiting** — auth endpoints: 20 req/15 min. AI assistant: 20 req/min
+- **Parameterised queries** — Knex enforces parameterisation throughout; no raw SQL string interpolation
+
+---
+
+## Demo Data
+
+To populate a demo environment with 36 months of realistic financial data:
+
+```bash
+node seeds/trainingData.js
+```
+
+Creates workspaces for `demo@ifas.dev` / `Demo1234!` with accounts, categories, departments, budgets, savings goals, and ~6,000 transactions. Required for meaningful forecast and anomaly detection testing.
+
+---
+
+## Running Without the Python Analytics Service
+
+Set `ANALYTICS_MODE=mock` and `AI_MODE=mock` in `.env` (the default). The Express API runs equivalent logic in-process using JavaScript — no Python installation, no network calls to external services. All analytics, forecasting, anomaly detection, and AI assistant responses will work using the built-in mock implementations.
